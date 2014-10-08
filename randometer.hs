@@ -11,7 +11,7 @@ size = (24, 6)
 
 data Trial = On | Off deriving Eq
 instance Show Trial where
-    show On = "◉"
+    show On = "●"
     show Off = "○"
 
 invert :: Trial -> Trial
@@ -114,7 +114,7 @@ chooseUnbiased x xs = do
     putStrLn ""
     putStrLn (if key !! guess == 0 then "Correct!" else "Wrong.")
 
-    let reveal n = printf "%d: %0.2f ◉\n" n ((x:xs) !! (key !! pred n))
+    let reveal n = printf "%d: %0.2f ●\n" n ((x:xs) !! (key !! pred n))
     mapM_ reveal [1 .. length boards]
 
 decide :: Double -> [Double] -> IO ()
@@ -150,10 +150,10 @@ identifyBias = do
     var <- runRVar stdUniform StdRandom
     board <- biasedGenerator (uncurry (*) size) var
     putStr $ unlines $ puzzle (fst size) board
-    guess <- askBool "Are these dots biased towards ◉?"
+    guess <- askBool "Are these dots biased towards ●?"
     putStrLn (if guess == (var > 0.5) then "Correct!" else "Wrong.")
     putStrLn ""
-    printf "The were biased %0.6f ◉.\n" var
+    printf "The were biased %0.6f ●.\n" var
 
 main :: IO ()
 main = do
