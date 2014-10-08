@@ -1,10 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Rando (main, moreOrLess, decide, chooseOne) where
+module Main (main, moreOrLess, decide, chooseOne) where
 import Control.Applicative
 import Control.Monad (replicateM)
 import Data.Char (toLower)
-import Text.Printf (printf)
 import Data.Random
+import Text.Printf (printf)
+import System.IO (hFlush, stdout)
 
 size :: (Int, Int)
 size = (24, 6)
@@ -59,6 +60,7 @@ groupsOf n xs = take n xs : groupsOf n (drop n xs)
 askN :: String -> [Int] -> IO Int
 askN prompt ints = do
     printf "%s\n» " prompt
+    hFlush stdout
     guess <- getLine
     if guess `elem` map show ints
     then pure $ read guess
@@ -67,6 +69,7 @@ askN prompt ints = do
 askBool :: String -> IO Bool
 askBool prompt = do
     printf "%s\n» " prompt
+    hFlush stdout
     guess <- getLine
     case map toLower guess of
         "y" -> return True
