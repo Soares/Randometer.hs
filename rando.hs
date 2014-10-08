@@ -1,72 +1,168 @@
-import Prelude
+{-# LANGUAGE OverloadedStrings #-}
+module Rando (main, moreOrLess, decide, chooseOne) where
 import Control.Applicative
-import Data.Random (runRVar, StdRandom(..), randomElement, shuffle)
+import Control.Monad (replicateM)
+import Data.Char (toLower)
+import Text.Printf (printf)
+import Data.Random
 
-data Symbol = On | Off
-instance Show Symbol where
-	show On = "H"
-	show Off = "T"
+size :: (Int, Int)
+size = (24, 6)
 
-randomSymbol :: IO Symbol
-randomSymbol = runRVar (randomElement [On, Off]) StdRandom
+data Trial = On | Off deriving Eq
+instance Show Trial where
+    show On = "◉"
+    show Off = "○"
 
-boxed :: [String] -> String
-boxed xs = header ++ unlines (map bracket xs) ++ footer where
-	len = maximum (map length xs)
-	header = '┌' : (take len $ repeat '─') ++ "┐\n"
-	bracket line = '│' : (take len $ line ++ repeat ' ') ++ "│"
-	footer = '└' : (take len $ repeat '─') ++ "┘"
+invert :: Trial -> Trial
+invert On = Off
+invert Off = On
 
-puzzle :: Int -> [Symbol] -> String
-puzzle _ [] = ""
+trial :: IO Trial
+trial = runRVar (randomElement [On, Off]) StdRandom
+
+mutedTrial :: Double -> Trial -> IO Trial
+mutedTrial propensity memory = do
+    rand <- runRVar (uniform 0 1) StdRandom
+    pure $ if rand < propensity then invert memory else memory
+
+biasedTrial :: Double -> IO Trial
+biasedTrial propensity = do
+    rand <- runRVar (uniform 0 1) StdRandom
+    pure $ if rand < propensity then On else Off
+
+generator :: Int -> Double -> IO [Trial]
+generator i = (trial >>=) . generator' i where
+    generator' 0 _ _ = pure []
+    generator' cap propensity previous = (previous:) <$> genrest where
+        gennext = mutedTrial propensity previous
+        genrest = gennext >>= generator' (cap - 1) propensity
+
+biasedGenerator :: Int -> Double -> IO [Trial]
+biasedGenerator n p = replicateM n $ biasedTrial p
+
+boxed :: [String] -> [String]
+boxed xs = header : map addSides xs ++ [footer] where
+    len = maximum $ map length xs
+    header = '┌' : replicate len '─' ++ "┐"
+    addSides line = '│' : take len (line ++ repeat ' ') ++ "│"
+    footer = '└' : replicate len '─' ++ "┘"
+
+puzzle :: Int -> [Trial] -> [String]
+puzzle _ [] = []
 puzzle n ys = boxed $ map (concatMap show) (groupsOf n ys)
 
 groupsOf :: Int -> [a] -> [[a]]
 groupsOf _ [] = []
-groupsOf n xs = (take n xs) : groupsOf n (drop n xs)
+groupsOf n xs = take n xs : groupsOf n (drop n xs)
 
-chunk :: Int -> IO [Symbol]
-chunk n = runRVar symlist StdRandom where
-	symlist = shuffle (take n (repeat On) ++ take n (repeat Off))
+askN :: String -> [Int] -> IO Int
+askN prompt ints = do
+    printf "%s\n» " prompt
+    guess <- getLine
+    if guess `elem` map show ints
+    then pure $ read guess
+    else askN prompt ints
 
-fake :: Int -> Int -> IO [Symbol]
-fake width count = concat <$> sequence symbols where
-	symbols = take (quot count (width * 2)) (repeat $ chunk width)
+askBool :: String -> IO Bool
+askBool prompt = do
+    printf "%s\n» " prompt
+    guess <- getLine
+    case map toLower guess of
+        "y" -> return True
+        "yes" -> return True
+        "n" -> return False
+        "no" -> return False
+        _ -> askBool prompt
 
-rando :: Int -> IO [Symbol]
-rando n = sequence $ take n $ repeat randomSymbol
+numberedBox :: Int -> [String] -> [String]
+numberedBox n xs = pad x0 : (leader ++ x1) : map pad xN where
+    leader = printf "%d. " n
+    pad = (map (const ' ') leader ++)
+    x0 = head xs
+    x1 = head $ tail xs
+    xN = tail $ tail xs
+
+shuffleBoards :: [[Trial]] -> IO [Int]
+shuffleBoards boards = runRVar (shuffle [0 .. pred $ length boards]) StdRandom
+
+displayBoards :: [[Trial]] -> [Int] -> IO ()
+displayBoards boards key = do
+    let display n = putStr . unlines . numberedBox n . puzzle (fst size)
+    mapM_ (uncurry display) (zip [1 ..] $ map (boards !!) key)
+
+chooseOne :: Double -> [Double] -> IO ()
+chooseOne x xs = do
+    boards <- mapM (generator $ uncurry (*) size) (x:xs)
+    key <- shuffleBoards boards
+    displayBoards boards key
+
+    guess <- pred <$> askN "Which is truly random?" [1 .. length boards]
+    putStrLn ""
+    putStrLn (if key !! guess == 0 then "Correct!" else "Wrong.")
+
+    let reveal n = printf "%d: %0.2f switch\n" n ((x:xs) !! (key !! pred n))
+    mapM_ reveal [1 .. length boards]
+
+chooseUnbiased :: Double -> [Double] -> IO ()
+chooseUnbiased x xs = do
+    boards <- mapM (biasedGenerator $ uncurry (*) size) (x:xs)
+    key <- shuffleBoards boards
+    displayBoards boards key
+
+    guess <- pred <$> askN "Which is unbiased?" [1 .. length boards]
+    putStrLn ""
+    putStrLn (if key !! guess == 0 then "Correct!" else "Wrong.")
+
+    let reveal n = printf "%d: %0.2f ◉\n" n ((x:xs) !! (key !! pred n))
+    mapM_ reveal [1 .. length boards]
+
+decide :: Double -> [Double] -> IO ()
+decide x xs = do
+    boards <- mapM (generator $ uncurry (*) size) (x:xs)
+    choice <- runRVar (randomElement [0 .. pred $ length boards]) StdRandom
+    putStr $ unlines $ puzzle (fst size) $ boards !! choice
+    guess <- askBool "Was this generated by a fair random generator?"
+    putStrLn (if guess == (choice == 0) then "Correct!" else "Wrong.")
+    printf "The dots flip with %0.2f chance.\n" $ (x:xs) !! choice
+
+decideBiased :: Double -> [Double] -> IO ()
+decideBiased x xs = do
+    boards <- mapM (biasedGenerator $ uncurry (*) size) (x:xs)
+    choice <- runRVar (randomElement [0 .. pred $ length boards]) StdRandom
+    putStr $ unlines $ puzzle (fst size) $ boards !! choice
+    guess <- askBool "Was this generated by an unbiased random generator?"
+    putStrLn (if guess == (choice == 0) then "Correct!" else "Wrong.")
+    printf "The dots flip with %0.2f chance.\n" $ (x:xs) !! choice
+
+moreOrLess :: IO ()
+moreOrLess = do
+    var <- runRVar stdUniform StdRandom
+    board <- generator (uncurry (*) size) var
+    putStr $ unlines $ puzzle (fst size) board
+    guess <- askBool "Are these dots more likely to flip than chance?"
+    putStrLn (if guess == (var > 0.5) then "Correct!" else "Wrong.")
+    putStrLn ""
+    printf "The dots flipped %0.6f times out of one.\n" var
+
+identifyBias :: IO ()
+identifyBias = do
+    var <- runRVar stdUniform StdRandom
+    board <- biasedGenerator (uncurry (*) size) var
+    putStr $ unlines $ puzzle (fst size) board
+    guess <- askBool "Are these dots biased towards ◉?"
+    putStrLn (if guess == (var > 0.5) then "Correct!" else "Wrong.")
+    putStrLn ""
+    printf "The were biased %0.6f ◉.\n" var
 
 main :: IO ()
 main = do
-	let width = 16
-	let size = width * 4
-
-	putStrLn "Hard mode? [y/n]"
-	wantsHard <- getLine
-	let playHard = wantsHard == "y"
-	let (name0, board0) = if playHard
-		then ("cell-4", fake 2)
-		else ("cell-2", fake 1)
-	let (name1, board1) = if playHard
-		then ("cell-8", fake 4)
-		else ("cell-4", fake 2)
-
-	boards <- sequence [board0 size, board1 size, rando size]
-	key <- runRVar (shuffle [0, 1, 2]) StdRandom
-	putStrLn "1."
-	putStrLn $ puzzle width $ boards !! (key !! 0)
-	putStrLn "2."
-	putStrLn $ puzzle width $ boards !! (key !! 1)
-	putStrLn "3."
-	putStrLn $ puzzle width $ boards !! (key !! 2)
-
-	guess <- getLine
-	if not (guess `elem` ["1", "2", "3"])
-	then putStrLn "fail"
-	else if key !! ((read guess) - 1) == 2
-		then putStrLn "win"
-		else putStrLn "lose"
-
-	let names = [name0, name1, "random"]
-	let reveal (n, b) = putStrLn $ (show n) ++ ": " ++ (names !! b)
-	mapM_ reveal (zip [1..] key)
+    game <- askN "Would you like to play a game? (Select [0-5])" [0..5]
+    case game of
+        0 -> chooseOne (1/2) [1/4, 1/3, 2/3, 3/4]
+        1 -> decide (1/2) [1/4, 1/3, 2/3, 3/4]
+        2 -> moreOrLess
+        3 -> chooseUnbiased (1/2) [1/4, 1/3, 2/3, 3/4]
+        4 -> decideBiased (1/2) [1/4, 1/3, 2/3, 3/4]
+        5 -> identifyBias
+        _ -> putStrLn "Wait, how did you do that?"
